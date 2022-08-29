@@ -1,5 +1,4 @@
 import json
-import concurrent.futures
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,7 +6,6 @@ from pprint import pprint
 from typing import List, Set, Iterable
 from src.config.config import config
 
-import requests
 from selenium import webdriver
 from selenium.common.exceptions import (
     NoSuchElementException,
@@ -99,9 +97,6 @@ def get_urls(driver, num_urls: int) -> Set[str]:
 
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
 
-
-
-    print(f"{posts=}")
     return posts
 
 
@@ -151,9 +146,6 @@ async def get_posts(url_list: Iterable[str], session: aiohttp.ClientSession) -> 
 
     post_list =  await asyncio.gather(*tasks)
     return_list = [item for sublist in post_list for item in sublist]
-    # import ipdb; ipdb.set_trace(context=7)
-
-
 
     pprint(f"{len(return_list)=}")
     return return_list
@@ -197,7 +189,6 @@ def login(driver):
 
     login = driver.find_elements(By.CSS_SELECTOR, "button")
 
-    # import ipdb; ipdb.set_trace(context=10)
     try:
         login[7].click()  # cookie options on vpn
         time.sleep(4)
