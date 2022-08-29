@@ -1,16 +1,14 @@
-import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from pprint import pprint
-from typing import List, Set, Iterable
+from typing import Collection, Set, Iterable
 from src.config.config import config
 
 from selenium import webdriver
 from selenium.common.exceptions import (
     NoSuchElementException,
     StaleElementReferenceException,
-    TimeoutException,
 )
 import asyncio
 import aiohttp
@@ -100,7 +98,7 @@ def get_urls(driver, num_urls: int) -> Set[str]:
     return posts
 
 
-def create_text_post_file(url_list: Set[str], num_posts: int, text_post: Path):
+def create_text_post_file(url_list: Collection[str], num_posts: int, text_post: Path):
     """Creates a text_post file to track which urls have been visisted.
 
     Made use of in case no new posts have been made, then don't bother with re-obtaining
@@ -134,7 +132,7 @@ async def get_post(url: str, session: aiohttp.ClientSession) -> list[Post]:
 
         return post_list
 
-async def get_posts(url_list: Iterable[str], session: aiohttp.ClientSession) -> List[Post]:
+async def get_posts(url_list: Iterable[str], session: aiohttp.ClientSession) -> list[Post]:
     post_list: list[list[Post]]
 
 
@@ -165,7 +163,7 @@ async def write_content(post: Post, dest_folder: Path, session: aiohttp.ClientSe
                 await file.write(chunk)
 
 
-async def save_media(post_list: List[Post], dest_folder: Path, session: aiohttp.ClientSession):
+async def save_media(post_list: list[Post], dest_folder: Path, session: aiohttp.ClientSession):
     """Asynchronously download multiple files at once from the post_list."""
 
     tasks = []
