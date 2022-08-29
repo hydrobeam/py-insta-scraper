@@ -1,0 +1,4 @@
+*.log
+config.toml
+__pycache__
+/output
