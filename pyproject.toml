@@ -13,6 +13,10 @@ aiofiles = "^0.8.0"
 
 [tool.poetry.dev-dependencies]
 ipdb = "^0.13.9"
+black = "^22.6.0"
+isort = "^5.10.1"
+# for single threaded testing
+requests = "^2.28.1"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
