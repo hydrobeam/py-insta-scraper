@@ -1,9 +1,15 @@
 [auth]
-username=username
-password=password
+# these fields are MANDATORY
+username="username"
+password="password"
 
 [insta]
-insta_user_list = [ user1,user2,user3 ]
+# replace this list with the users you wish to target
+insta_user_list = [
+"user1",
+"user2",
+"user3",
+]
 
 [file]
 output_location="output"
