@@ -140,7 +140,7 @@ async def get_posts(session: aiohttp.ClientSession, user: User) -> list[Post]:
     return total_post_list
 
 
-async def write_content(post: Post, dest_folder: Path, session: aiohttp.ClientSession) -> Post | None:
+async def write_content(post: Post, dest_folder: Path, session: aiohttp.ClientSession):
     """Actually writes the post url to file"""
     open_sesame = f"{dest_folder}/{post.tert_folder}/{post.id}.{post.extension}"
     if Path(open_sesame).exists():
@@ -154,7 +154,6 @@ async def write_content(post: Post, dest_folder: Path, session: aiohttp.ClientSe
                 succeeded = True
             except TimeoutError:
                 print(f"TimeoutError at: {post.url}")
-
 
         async with aiofiles.open(open_sesame, "wb") as file:
             async for data in stuff.content.iter_any():
