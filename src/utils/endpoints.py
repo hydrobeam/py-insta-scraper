@@ -6,8 +6,16 @@ from dataclasses import dataclass
 @dataclass
 class EndpointsClass:
     BASE_URL: str = "https://www.instagram.com"
+    # obtain a paginated collection of user posts
     ACCOUNT_MEDIAS: str = "https://www.instagram.com/graphql/query/?query_hash=e769aa130647d2354c40ea6a439bfc08&variables={variables}"
+    # obtain data about a user.
     ACCOUNT_JSON_INFO: str = "https://www.instagram.com/{username}/?__a=1&__d=dis"
+    FOLLOW_ACOUNT: str = (
+        "https://i.instagram.com/api/v1/web/friendships/{user_id}/follow/"
+    )
+    UNFOLLOW_ACCOUNT: str = (
+        "https://i.instagram.com/api/v1/web/friendships/{user_id}/unfollow/"
+    )
 
     def account_json(self, username: str) -> str:
         """Generate an endpoint to get JSON info about a user
@@ -34,7 +42,7 @@ class EndpointsClass:
 
         Parameters
         ----------
-        user_id : int
+        user_id : str
             The id of the user to query
         after : str
             The ``end_cursor`` value from previous calls of the user's feed
@@ -47,6 +55,20 @@ class EndpointsClass:
         return self.ACCOUNT_MEDIAS.replace(
             "{variables}", urllib.parse.quote_plus(json.dumps(vars_dict))
         )
+
+    def follow(self, user_id: str) -> str:
+        """Generates the endpoint to call to follow a user.
+
+        Call via a POST request
+        """
+        return self.FOLLOW_ACOUNT.replace("{user_id}", user_id)
+
+    def unfollow(self, user_id: str) -> str:
+        """Generates the endpoint to call to unfollow/unrequest a user.
+
+        Call via a POST request.
+        """
+        return self.UNFOLLOW_ACCOUNT.replace("{user_id}", user_id)
 
 
 Endpoints = EndpointsClass()
