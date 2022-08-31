@@ -244,6 +244,8 @@ async def core_func(session: aiohttp.ClientSession, user_profile: str):
 
     if not user.can_view:
         print(f"Do not have permission to view user: {user.username}")
+        await session.post(Endpoints.follow(user.id))
+        print(f"Requested to follow: {user.username}")
         return
 
 
