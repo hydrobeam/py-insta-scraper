@@ -1,11 +1,14 @@
 import asyncio
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from pprint import pprint
 
 import aiofiles
 import aiohttp
+import toml
+from aiohttp.client_exceptions import ContentTypeError
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -21,7 +24,12 @@ class User:
     num_followers: int
     num_posts: int
     is_private: bool
-    can_view: bool
+    followed_by_viewer: bool
+
+    def __post_init__(self):
+        self.can_view = (self.followed_by_viewer and self.is_private) or (
+            not self.is_private
+        )
 
     @classmethod
     def from_node(cls, node: dict):
@@ -29,21 +37,15 @@ class User:
 
         try:
             user_json = node["graphql"]["user"]
-        except KeyError:
-            raise (
-                Exception(f"Failed with: {node['message']}, status: {node['status']}")
-            )
+        except:
+            pprint(node)
 
         id = user_json["id"]
         username = user_json["username"]
         num_followers = user_json["edge_followed_by"]["count"]
         num_posts = user_json["edge_owner_to_timeline_media"]["count"]
-
         is_private = user_json["is_private"]
-        if not user_json["followed_by_viewer"] and is_private:
-            can_view = False
-        else:
-            can_view = True
+        followed_by_viewer = user_json["followed_by_viewer"]
 
         return cls(
             id=id,
@@ -51,7 +53,7 @@ class User:
             num_followers=num_followers,
             num_posts=num_posts,
             is_private=is_private,
-            can_view=can_view,
+            followed_by_viewer=followed_by_viewer,
         )
 
 
@@ -60,8 +62,10 @@ class Post:
     url: str
     id: str  # effectively the "id" of the post
     is_video: bool
-    extension: str
-    tert_folder: str
+
+    def __post_init__(self):
+        self.extension = "mp4" if self.is_video else "jpg"
+        self.tert_folder = "vid" if self.is_video else "img"
 
     @classmethod
     def from_node(cls, node: dict):
@@ -75,20 +79,25 @@ class Post:
             url = node["display_url"]
             is_video = False
 
-        extension = "mp4" if is_video else "jpg"
-        tert_folder = "vid" if is_video else "img"
-
         return cls(
             url=url,
             id=node["id"],
             is_video=is_video,
-            extension=extension,
-            tert_folder=tert_folder,
         )
 
 
-async def get_posts(session: aiohttp.ClientSession, user: User) -> list[Post]:
-    """Query endpoints to assemble a list of Posts to download."""
+async def get_posts(
+    session: aiohttp.ClientSession, user: User
+) -> tuple[list[Post], int]:
+    """Query endpoints to assemble a list of Posts to download.
+
+
+    Returns
+    -------
+        A tuple consisting of the number of media files, and the number of posts
+    actually queried. Done this way to verify if there are discrepancies between the number
+    of reported posts, and the number of posts available to us.
+    """
 
     total_post_list: list[Post] = []
 
@@ -99,45 +108,56 @@ async def get_posts(session: aiohttp.ClientSession, user: User) -> list[Post]:
     counter = 0
 
     while has_next_page:
-        async with session.get(
-            Endpoints.account_medias(user_id=user.id, after=end_cursor)
-        ) as resp:
-            json_result: dict = await resp.json()
+        # connection rodeo
+        while True:
+            resp = await session.get(
+                Endpoints.account_medias(user_id=user.id, after=end_cursor)
+            )
+            if not resp.ok:
+                if resp.status == 429:
+                    print("Hit API Limit")
+                    await asyncio.sleep(120) # wait for a minute and try again
+                elif resp.status == 404:
+                    print(f"HIT 404: {user.username} does not exist")
+                    import ipdb; ipdb.set_trace(context=7)
+                elif resp.status == 560:
+                    # https://lightrun.com/answers/instaloader-instaloader-instagram-560-errors-when-trying-to-download-stories-from-lots-of-accounts
+                    print("Insta is ??? + API limit (maybe?)")
+                    await asyncio.sleep(120)
+            elif not await resp.json():
+                # no idea why this doesn't return a 404 when the user doesn't exist
+                # but the spelling is close?
+                print(f"EMPTY JSON: {user.username} does not exist")
+                import ipdb; ipdb.set_trace(context=7)
+            else:
+                break
 
-            try:
-                timeline_media = json_result["data"]["user"][
-                    "edge_owner_to_timeline_media"
-                ]
-            except KeyError:
-                raise (
-                    Exception(
-                        f"Failed with: {json_result['message']}, status: {json_result['status']}"
-                    )
-                )
+        json_result: dict = await resp.json()
+        timeline_media = json_result["data"]["user"][
+            "edge_owner_to_timeline_media"]
 
-            has_next_page = timeline_media["page_info"]["has_next_page"]
-            end_cursor = timeline_media["page_info"]["end_cursor"]
 
-            # list of up to``count`` posts of the user
-            media_list = timeline_media["edges"]
+        has_next_page = timeline_media["page_info"]["has_next_page"]
+        end_cursor = timeline_media["page_info"]["end_cursor"]
 
-            for post in media_list:
-                post_list: list[Post] = []
+        # list of up to``count`` posts of the user
+        media_list = timeline_media["edges"]
 
-                node = post["node"]
-                # if there are multiple media items in this singular post
-                if (sidecar := node.get("edge_sidecar_to_children")) is not None:
-                    for subnode in sidecar["edges"]:
-                        post_list.append(Post.from_node(subnode["node"]))
-                else:
-                    post_list.append(Post.from_node(node))
+        for post in media_list:
+            post_list: list[Post] = []
 
-                counter += 1
-                total_post_list += post_list
+            node = post["node"]
+            # if there are multiple media items in this singular post
+            if (sidecar := node.get("edge_sidecar_to_children")) is not None:
+                for subnode in sidecar["edges"]:
+                    post_list.append(Post.from_node(subnode["node"]))
+            else:
+                post_list.append(Post.from_node(node))
 
-    print(f"Observed {counter} posts out of {user.num_posts} for {user.username}")
+            counter += 1
+            total_post_list += post_list
 
-    return total_post_list
+    return (total_post_list, counter)
 
 
 async def write_content(post: Post, dest_folder: Path, session: aiohttp.ClientSession):
@@ -147,17 +167,17 @@ async def write_content(post: Post, dest_folder: Path, session: aiohttp.ClientSe
         # don't rewrite existing files, id is always the same
         pass
     else:
-        succeeded = False
-        while not succeeded:
+        while True:
             try:
                 stuff = await session.get(post.url)
-                succeeded = True
-            except TimeoutError:
-                print(f"TimeoutError at: {post.url}")
 
-        async with aiofiles.open(open_sesame, "wb") as file:
-            async for data in stuff.content.iter_any():
-                await file.write(data)
+                async with aiofiles.open(open_sesame, "wb") as file:
+                    async for data in stuff.content.iter_chunked(1024):
+                        await file.write(data)
+
+                break
+            except Exception as e:
+                print(f"Error at: {post.id}\nException: {e}")
 
 
 async def save_media(
@@ -187,54 +207,85 @@ def login(driver):
     login = driver.find_elements(By.CSS_SELECTOR, "button")
 
     try:
-        login[7].click()  # cookie options on vpn
+        login[7].click()  # cookie options on vpn in EU
         time.sleep(3)
     except IndexError:
         pass
 
     login[1].click()  # is the first button, (i assume logo is first)
-    time.sleep(4)  # sleep for long enough so that the instagram page loads
+    time.sleep(6)  # sleep for long enough so that the instagram page loads
 
 
 async def core_func(session: aiohttp.ClientSession, user_profile: str):
-    json_user: dict = await (
-        await session.get(Endpoints.account_json(user_profile))
-    ).json()
+    failed_api_count  = 1
+    while True:
+        resp = await session.get(Endpoints.account_json(user_profile))
+        if not resp.ok:
+            if resp.status == 429:
+                print(f"Hit API Limit: {failed_api_count=}")
+                failed_api_count+=1
+                await asyncio.sleep(120) # wait for a minute and try again
+            elif resp.status == 404:
+                print(f"HIT 404: {user_profile} does not exist")
+                return
+            elif resp.status == 560:
+                # https://lightrun.com/answers/instaloader-instaloader-instagram-560-errors-when-trying-to-download-stories-from-lots-of-accounts
+                print("Insta is ??? + API limit (maybe?)")
+                await asyncio.sleep(120)
+        elif not await resp.json():
+            # no idea why this doesn't return a 404 when the user doesn't exist
+            # but the spelling is close?
+            print(f"EMPTY JSON: {user_profile} does not exist")
+            return
+        else:
+            break
 
-    # if unempty
-    if json_user:
-        user = User.from_node(json_user)
-    else:
-        print(f"User: {user_profile} does not exist")
-        return
+    user = User.from_node(await resp.json())
 
     if not user.can_view:
         print(f"Do not have permission to view user: {user.username}")
         return
 
-    print(f"Querying: {user_profile}")
 
     dest_folder = (
         Path(__file__).parent.parent
-        / f"{config.data['file']['output_location']}/{user_profile}"
+        / f"{config.data['file']['output_location']}/{user.username}"
     )
-    Path(dest_folder).mkdir(parents=True, exist_ok=True)
-    Path(f"{dest_folder}/img").mkdir(exist_ok=True)
-    Path(f"{dest_folder}/vid").mkdir(exist_ok=True)
+    dest_folder.mkdir(parents=True, exist_ok=True)
+    (dest_folder / "img").mkdir(exist_ok=True)
+    (dest_folder / "vid").mkdir(exist_ok=True)
 
-    post_list = await get_posts(session, user)
+    cache_file: Path = dest_folder / "cache.toml"
 
-    print(f"{len(post_list)} posts detected for {user.username}")
+    # whether we should query
+    queryp = True
+    if cache_file.exists():
+        cached_content = toml.load(cache_file)
+        if cached_content["expected_post_count"] == user.num_posts:
+            print(f"No action needed for {user.username}")
+            queryp = False
 
-    await save_media(post_list, dest_folder, session)
+    if queryp:
+        print(f"Querying: {user.username}")
+        media_list, post_number = await get_posts(session, user)
+        await save_media(media_list, dest_folder, session)
+        print(f"Wrote all content for {user.username}")
 
-    print(f"Wrote all content for {user_profile}")
+        async with aiofiles.open(cache_file, "w") as file:
+            content = {
+                "observed_post_count": post_number,
+                "expected_post_count": user.num_posts,
+                "media_item_count": len(media_list),
+                "query_time": datetime.now(),
+            }
+            pprint(f"{user.username}: {content}")
+            await file.write(toml.dumps(content))
 
 
 async def main():
     driver_options = Options()
     # don't need to see the logging in happening
-    driver_options.headless = True
+    # driver_options.headless = True
     # might improve performance? source:
     # https://stackoverflow.com/a/53657649
     driver_options.add_argument("--disable-extensions")
@@ -255,8 +306,6 @@ async def main():
     # https://stackoverflow.com/questions/29563335/how-do-i-load-session-and-cookies-from-selenium-browser-to-requests-library-in-p
 
     cookie_mapping = [(cookie["name"], cookie["value"]) for cookie in cookies]
-    pprint(cookies)
-    pprint(cookie_mapping)
     session.cookie_jar.update_cookies(cookie_mapping)
 
     tasks = []
